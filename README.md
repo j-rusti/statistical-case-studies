@@ -1,30 +1,30 @@
 Case Studies — Full Overview
 ===========================
 
-This repository contains four independent case studies, each with its own analysis scripts, data, and reports. This main README provides a high-level overview before exploring the individual project folders.
+This repository contains four independent case studies, each in its own folder, with analyses, scripts, and reports.
 
-Frankenstein Authorship Analysis
-===============================
-Investigates disputed authorship of *Frankenstein* using stylometric methods and classifiers to compare candidate authors.
-
-Lucy Letby Blood Analysis
-=========================
-Analyses insulin and C-peptide levels in infants to assess unusual measurements using statistical modeling and prediction intervals.
-
-ChatGPT Authorship Detection
-============================
+ChatGPT vs Human Writing
+========================
 Explores whether stylometry can distinguish ChatGPT-generated essays from human-written essays using multiple classifiers and experiments.
 
-Power Demand and Climate Analysis
-=================================
+Energy Demand
+=============
 Model winter electricity demand in Great Britain (1991–2013) to assess the influence of weather and temporal trends, and to forecast peak demand under historical scenarios.
+
+Frankenstein Classification
+==========================
+Investigates disputed authorship of *Frankenstein* using stylometric methods and classifiers to compare candidate authors.
+
+Lucy Letby
+==========
+Analyses insulin and C-peptide levels in infants to assess unusual measurements using statistical modeling and prediction intervals.
 
 Repository Structure
 ====================
-- `Frankenstein/`
-- `LucyLetby/`
-- `ChatGPT-Authorship/`
-- `Power-Demand/`
+- `ChatGPT vs Human Writing/`
+- `Energy Demand/`
+- `Frankenstein Classification/`
+- `Lucy Letby/`
 
 Requirements
 ============
