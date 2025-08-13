@@ -1,0 +1,402 @@
+---
+title: "FrankReport"
+author: "Me"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+source('FrankCode.R')
+```
+
+```{r Corpus}
+M <- loadCorpus('Corpus/','frequentwords70')
+M$authornames
+UnknownInd <- which(M$authornames == 'Unknown')
+KnownFeatures <- M$features[-UnknownInd]
+KnownAuthors <- M$authornames[-UnknownInd]
+PSNInd <- which(KnownAuthors == 'PercyShelley')
+PSPInd <- which(KnownAuthors == 'PercyShelleyPoetry')
+MSInd <- which(KnownAuthors == 'MaryShelley')
+BSInd <- which(KnownAuthors == 'BramStoker')
+WSInd <- which(KnownAuthors == 'WalterScott')
+WGInd <- which(KnownAuthors == 'WilliamGodwin')
+KnownFeaturesUp <- M$features[-UnknownInd]
+```
+
+```{r Percy Shelley Data Visualisation}
+x <- NULL
+
+for (i in 1:length(KnownFeatures)) {
+  x <- rbind(x, apply(KnownFeatures[[i]],2,sum))
+}
+
+for (i in 1:nrow(x)) {
+  x[i,] <- x[i,] / sum(x[i,])
+}
+
+for (j in 1:ncol(x)) {
+  x[,j] <- (x[,j] - mean(x[,j]))/sd(x[,j])
+}
+
+d <- dist(x)
+pts <- cmdscale(d)
+
+colors <- rep("gray1", nrow(pts))
+colors[PSPInd] <- "blue"
+colors[PSNInd] <- "tomato2"
+
+
+
+plot(pts, type='n', xlab = '', ylab = '', main='Comparison of Author Styles (MDS)')
+points(pts[,1], pts[,2], col=colors, pch=16)
+
+legend("topright", legend = c("Percy's Poetry", "Percy's Novels"), 
+       col = c("blue", "tomato2"), 
+       pch = 16, title = "Author")
+
+mean(as.matrix(d))
+as.matrix(d)[PSNInd, PSPInd]
+as.matrix(d)[WGInd, MSInd]
+
+# x
+# Justification for removing poetry?
+# Find average distance within each author
+# Find distance within PSN PSP and combined
+
+```
+
+```{r}
+x <- NULL
+
+for (i in 1:length(M$features)) {
+  x <- rbind(x, apply(M$features[[i]],2,sum))
+}
+
+for (i in 1:nrow(x)) {
+  x[i,] <- x[i,] / sum(x[i,])
+}
+
+for (j in 1:ncol(x)) {
+  x[,j] <- (x[,j] - mean(x[,j]))/sd(x[,j])
+}
+
+d <- dist(x)
+pts <- cmdscale(d)
+
+colors <- rep("gray1", nrow(pts))
+colors[which(M$authornames == 'Unknown')] <- "limegreen"
+colors[which(M$authornames == 'MaryShelley')] <- "blue"
+colors[which(M$authornames == 'WilliamGodwin')] <- "tomato2"
+colors[which(M$authornames == 'WalterScott')] <- "magenta"
+
+
+
+plot(pts, type='n', xlab = '', ylab = '', main='Comparison of Author Styles (MDS)')
+points(pts[,1], pts[,2], col=colors, pch=16)
+
+legend("topright", legend = c("Frankenstein", "Mary Shelley", "William Godwin", "Walter Scott"), 
+       col = c("limegreen", "blue", "tomato2", "magenta"), 
+       pch = 16, title = "Author")
+mean(as.matrix(d))
+as.matrix(d)[PSNInd, PSPInd]
+as.matrix(d)[WGInd, MSInd]
+
+```
+
+```{r KNN k accuray plot}
+# Set the maximum value of k
+n <- 10  # You can change this to any positive integer
+
+# Initialize a vector to store accuracy for each k
+basic_score <- numeric(n)  # For k = 1 to n
+mean_precision <- numeric(n)
+
+# Loop over k values from 1 to n
+for (k in 1:n) {
+  KNNpredictions <- NULL
+  truth <- NULL
+  features <- KnownFeaturesUp
+  
+  for (i in 1:length(features)) {
+    for (j in 1:nrow(features[[i]])) {
+      if (nrow(features[[i]]) == 1) {
+
+      } else {
+        testdata <- matrix(features[[i]][j,], nrow=1)
+        traindata <- features
+        traindata[[i]] <- traindata[[i]][-j, , drop=FALSE]  # Remove the test instance from training data
+      }
+      
+      # Get predictions using KNN with current k
+      pred <- KNNCorpus(traindata, testdata, k=k)
+      KNNpredictions <- c(KNNpredictions, pred)
+      truth <- c(truth, i)
+    }
+  }
+  
+  # Calculate accuracy for the current k
+  basic_score[k] <- sum(KNNpredictions == truth) / length(truth)
+  
+  KNNpredictions <- factor(KNNpredictions, levels = 1:length(features))
+  
+  KNNconfusion <- confusionMatrix(as.factor(KNNpredictions), as.factor(truth))
+  
+  mean_precision[k] <- mean(KNNconfusion$byClass[ ,'Precision'], na.rm=TRUE)
+}
+
+# Plot the accuracy against k
+plot(1:n, basic_score, type='b', pch=19, col='blue', 
+     xlab='k (Number of Neighbors)', ylab='Accuracy', 
+     main='KNN Basic Score vs k')
+
+plot(1:n, mean_precision, type='b', pch=19, col='blue', 
+     xlab='k (Number of Neighbors)', ylab='Mean Precision', 
+     main='KNN Mean Precision vs k')
+```
+
+```{r LOO-CV PSP PSN seperate}
+
+KnownFeatures <- M$features[-UnknownInd]
+
+predictions <- NULL
+KNNpredictions <- NULL
+truth <- NULL
+features <- KnownFeatures
+for (i in 1:length(features)) {
+  for (j in 1:nrow(features[[i]])) {
+    if (nrow(traindata[[i]]) == 1) {
+      
+    }
+    else {
+      testdata <- matrix(features[[i]][j,],nrow=1)
+      traindata <- features
+      traindata[[i]] <- traindata[[i]][-j,,drop=FALSE]
+    }
+    pred <- discriminantCorpus(traindata, testdata)
+    predictions <- c(predictions, pred)
+    pred <- KNNCorpus(traindata, testdata)
+    KNNpredictions <- c(KNNpredictions, pred)
+    truth <- c(truth, i)
+  }
+}
+
+#Adjusts the assigning of factors
+predictions <- factor(predictions, levels = 1:length(features))
+KNNpredictions <- factor(KNNpredictions, levels = 1:length(features))
+truth <- factor(truth, levels = 1:length(features))
+
+#Computes the basic score
+cat("DA Basic Score:", sum(predictions==truth)/length(truth), "\n")
+cat("KNN Basic Score:", sum(KNNpredictions==truth)/length(truth), "\n")
+
+#Outputs the confusion matrix
+confusion <- confusionMatrix(as.factor(predictions), as.factor(truth))
+KNNconfusion <- confusionMatrix(as.factor(KNNpredictions), as.factor(truth))
+
+cat("DA Mean Precision (excluding NA):", mean(confusion$byClass[ ,'Precision'], na.rm=TRUE), "\n")
+cat("KNN Mean Precision (excluding NA):", mean(KNNconfusion$byClass[ ,'Precision'], na.rm=TRUE), "\n")
+
+#confusion
+#KNNconfusion
+
+confusion$byClass[ ,'Precision']
+KNNconfusion$byClass[ ,'Precision']
+
+# Ive added a factor argument, is this acceptable?
+# Should I use log score
+```
+
+```{r LOO-CV PSP PSN together}
+
+KnownFeaturesUp <- KnownFeatures
+KnownFeaturesUp[[PSNInd]] <- rbind(KnownFeaturesUp[[PSNInd]], KnownFeaturesUp[[PSPInd]])
+KnownFeaturesUp <- KnownFeaturesUp[-PSPInd]
+KnownAuthorsUp <- KnownAuthors[-PSPInd]
+
+predictions <- NULL
+KNNpredictions <- NULL
+truth <- NULL
+features <- KnownFeaturesUp
+for (i in 1:length(features)) {
+  for (j in 1:nrow(features[[i]])) {
+    if (nrow(traindata[[i]]) == 1) {
+      
+    }
+    else {
+      testdata <- matrix(features[[i]][j,],nrow=1)
+      traindata <- features
+      traindata[[i]] <- traindata[[i]][-j,,drop=FALSE]
+    }
+    pred <- discriminantCorpus(traindata, testdata)
+    predictions <- c(predictions, pred)
+    pred <- KNNCorpus(traindata, testdata)
+    KNNpredictions <- c(KNNpredictions, pred)
+    truth <- c(truth, i)
+  }
+}
+
+#Adjusts the assigning of factors
+predictions <- factor(predictions, levels = 1:length(features))
+KNNpredictions <- factor(KNNpredictions, levels = 1:length(features))
+truth <- factor(truth, levels = 1:length(features))
+
+#Computes the basic score
+cat("DA Basic Score:", sum(predictions==truth)/length(truth), "\n")
+cat("KNN Basic Score:", sum(KNNpredictions==truth)/length(truth), "\n")
+
+#Outputs the confusion matrix
+confusion <- confusionMatrix(as.factor(predictions), as.factor(truth))
+KNNconfusion <- confusionMatrix(as.factor(KNNpredictions), as.factor(truth))
+
+cat("DA Mean Precision (excluding NA):", mean(confusion$byClass[ ,'Precision'], na.rm=TRUE), "\n")
+cat("KNN Mean Precision (excluding NA):", mean(KNNconfusion$byClass[ ,'Precision'], na.rm=TRUE), "\n")
+
+#confusion
+#KNNconfusion
+
+confusion$byClass[ ,'Precision']
+KNNconfusion$byClass[ ,'Precision']
+
+# Ive added a factor argument, is this acceptable?
+# Should I use log score
+```
+
+```{r Unknown Classification}
+
+Authors <- M$authornames[-UnknownInd]
+
+# Discriminant analysis/KNN using whole corpus to classify unknown text
+pred <- discriminantCorpus(M$features[-UnknownInd], M$features[[UnknownInd]])
+KNNpred <- KNNCorpus(M$features[-UnknownInd], M$features[[UnknownInd]])
+
+# Output results
+cat("Seperate dataset \n DA:",Authors[pred],"\n KNN:", Authors[KNNpred],"\n")
+
+Authors <- M$authornames
+
+# Combine Percy Shelley's full bibliography (while including unknown)
+PSNInd <- which(Authors == 'PercyShelley')
+PSPInd <- which(Authors == 'PercyShelleyPoetry')
+
+TempFeatures <- M$features
+TempFeatures[[PSNInd]] <- rbind(KnownFeaturesUp[[PSNInd]], KnownFeaturesUp[[PSPInd]])
+TempFeatures <- TempFeatures[-PSPInd]
+
+TempAuthors <- Authors[-c(PSPInd)]
+TempUnknownInd <- which(TempAuthors == 'Unknown')
+TempAuthors <- TempAuthors[-TempUnknownInd]
+
+# Discriminant analysis/KNN using whole corpus to classify unknown text
+Temppred <- discriminantCorpus(TempFeatures[-TempUnknownInd], TempFeatures[[TempUnknownInd]])
+TempKNNpred <- KNNCorpus(TempFeatures[-TempUnknownInd], TempFeatures[[TempUnknownInd]])
+
+cat("Combined dataset \n DA:",TempAuthors[Temppred],"\n KNN:", TempAuthors[TempKNNpred],"\n")
+```
+
+```{r Without Mary Datasets}
+Authors <- M$authornames
+
+# Combine Percy Shelley's full bibliography (while including unknown)
+MSInd <- which(Authors == 'MaryShelley')
+
+TempFeatures <- M$features
+TempFeatures <- TempFeatures[-MSInd]
+
+TempAuthors <- Authors[-MSInd]
+TempUnknownInd <- which(TempAuthors == 'Unknown')
+TempAuthors <- TempAuthors[-TempUnknownInd]
+
+# Discriminant analysis/KNN using whole corpus to classify unknown text
+Temppred <- discriminantCorpus(TempFeatures[-TempUnknownInd], TempFeatures[[TempUnknownInd]])
+TempKNNpred <- KNNCorpus(TempFeatures[-TempUnknownInd], TempFeatures[[TempUnknownInd]])
+
+cat("Without Mary Shelley dataset \n DA:",TempAuthors[Temppred],"\n KNN:", TempAuthors[TempKNNpred],"\n")
+```
+
+```{r Without Percy Dataset}
+Authors <- M$authornames
+
+# Combine Percy Shelley's full bibliography (while including unknown)
+PSNInd <- which(Authors == 'PercyShelley')
+PSPInd <- which(Authors == 'PercyShelleyPoetry')
+
+TempFeatures <- M$features
+TempFeatures <- TempFeatures[-c(PSNInd,PSPInd)]
+
+TempAuthors <- Authors[-c(PSNInd,PSPInd)]
+TempUnknownInd <- which(TempAuthors == 'Unknown')
+TempAuthors <- TempAuthors[-TempUnknownInd]
+
+# Discriminant analysis/KNN using whole corpus to classify unknown text
+Temppred <- discriminantCorpus(TempFeatures[-TempUnknownInd], TempFeatures[[TempUnknownInd]])
+TempKNNpred <- KNNCorpus(TempFeatures[-TempUnknownInd], TempFeatures[[TempUnknownInd]])
+
+cat("Without Percy Shelley dataset \n DA:",TempAuthors[Temppred],"\n KNN:", TempAuthors[TempKNNpred],"\n")
+```
+
+```{r Without Mary and Percy}
+Authors <- M$authornames
+
+# Combine Percy Shelley's full bibliography (while including unknown)
+PSNInd <- which(Authors == 'PercyShelley')
+PSPInd <- which(Authors == 'PercyShelleyPoetry')
+MSInd <- which(Authors == 'MaryShelley')
+
+TempFeatures <- M$features
+TempFeatures <- TempFeatures[-c(MSInd,PSNInd,PSPInd)]
+
+TempAuthors <- Authors[-c(MSInd,PSNInd,PSPInd)]
+TempUnknownInd <- which(TempAuthors == 'Unknown')
+TempAuthors <- TempAuthors[-TempUnknownInd]
+
+# Discriminant analysis/KNN using whole corpus to classify unknown text
+Temppred <- discriminantCorpus(TempFeatures[-TempUnknownInd], TempFeatures[[TempUnknownInd]])
+TempKNNpred <- KNNCorpus(TempFeatures[-TempUnknownInd], TempFeatures[[TempUnknownInd]])
+
+cat("Without Mary and Percy Shelley dataset \n DA:",TempAuthors[Temppred],"\n KNN:", TempAuthors[TempKNNpred],"\n")
+```
+
+```{r Placing in History Mary Shelley}
+# Visualize unknown in authors bibliography
+# Visualize unknown text compared to all authors
+# What should I do with the joint
+
+y <- rbind(M$features[[which(Authors == 'MaryShelley')]],M$features[[which(Authors == 'Unknown')]])
+for (i in 1:nrow(y)) {
+y[i,] <- y[i,] / sum(y[i,])
+}
+for (j in 1:ncol(y)) {
+y[,j] <- (y[,j] - mean(y[,j]))/sd(y[,j])
+}
+
+d <- dist(y)
+pts <- cmdscale(d)
+plot(pts[1:(nrow(y)) , ], type='n', xlab='', ylab='', main='Mary Shelley\'s Bibliography Including Frankenstein (MDS)')
+text(pts[1:(nrow(y)-1), 1], pts[1:(nrow(y)-1), 2], label=c("'37", "'26", "'35", "'20", "'23", "'30"))
+text(pts[nrow(y), 1], pts[nrow(y), 2], labels="'18", col='tomato2')
+legend("topright", legend = c("Frankenstein"), 
+       col = c("tomato2"), 
+       pch = 15, title = "Book")
+
+# Mathilda published in 1959, written between 1819-1820
+```
+
+```{r Placing in History Walter Scott}
+z <- rbind(M$features[[which(Authors == 'WilliamGodwin')]], M$features[[which(Authors == 'Unknown')]])
+for (i in 1:nrow(z)) {
+  z[i,] <- z[i,] / sum(z[i,])
+}
+for (j in 1:ncol(z)) {
+  z[,j] <- (z[,j] - mean(z[,j]))/sd(z[,j])
+}
+
+zd <- dist(z)
+zpts <- cmdscale(zd)
+plot(zpts[1:(nrow(z)), ], type='n', xlab='', ylab='', main='William Godwin\'s Bibliography Including Frankenstein (MDS)')
+text(zpts[1:(nrow(z)-1), 1], zpts[1:(nrow(z)-1), 2], label=c("'94", "'84", "'06", "'84", "'99"))
+text(zpts[nrow(z), 1], zpts[nrow(z), 2], labels="'18", col='tomato2')
+legend("topright", legend = c("Frankenstein"), 
+       col = c("tomato2"), 
+       pch = 15, title = "Book")
+```

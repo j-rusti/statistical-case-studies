@@ -1,0 +1,310 @@
+  -------------
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, error=FALSE, warning=FALSE, comment=NA)
+# switch this to TRUE to save figures in separate files
+savefigs <- FALSE
+```
+
+#### Load packages
+
+```{r }
+library("ggplot2")
+library("dplyr")
+library("cv")
+library("MASS")
+```
+
+#### Load blood measurement data of C-peptide and insulin data, removes NA, removes "<5"
+#### and "<1" or replaces them with 2.5 and 0.5. Renames columns to shortened names for convenience.
+
+```{r }
+# load the data file
+bldlvl1 <- read.csv(file = "Bloodlevels.csv", stringsAsFactors = FALSE)
+
+# uncomment these lines for alternate replacement of the <5 and <1 values
+
+#bldlvl1$CPeptide[bldlvl1$CPeptide == "<5"] <- 2.5
+#bldlvl1$CPeptide[bldlvl1$CPeptide == "<5"] <- 0.5
+
+# removes nans and non numeric values
+bldlvl <- bldlvl1
+bldlvl <- bldlvl1 %>% mutate(CPeptide = as.numeric(as.character(CPeptide)),
+                      Insulin = as.numeric(as.character(Insulin))) %>%
+                      filter(!is.na(CPeptide) & !is.na(Insulin)) %>%
+                      dplyr::select(Year, CPeptide, Insulin) %>%
+                      rename(Cpep = CPeptide,Ins=Insulin)
+
+# Finds the maximum insulin
+max(bldlvl$Ins, na.rm = TRUE)
+
+```
+
+## Task 1
+
+#### Directly proportional model (under null hypothesis the intercept should be zero)
+
+```{r }
+# Model 1 linear regression
+lin_fit_noint <- lm(Cpep ~ 0 + Ins, data = bldlvl)
+
+# Residual plots and metrics
+plot(bldlvl$Cpep, x=bldlvl$Ins, xlab="Insulin", ylab="C-peptide")
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(lin_fit_noint)
+summary(lin_fit_noint)
+AIC(lin_fit_noint)
+cv(lin_fit_noint)
+```
+
+#### Plot the directly proportional model, with a 99% confidence interval and the data
+
+```{r}
+# Makes a sequence of predictions and 99% prediction intervals along the insulin scale
+seq_data <- data.frame(Ins = seq(min(bldlvl$Ins), max(bldlvl$Ins), length.out = 100))
+
+pred <- predict(lin_fit_noint, seq_data, interval = "prediction", level = 0.99)
+
+seq_data$fit <- pred[, "fit"]
+seq_data$lwr <- pred[, "lwr"]
+seq_data$upr <- pred[, "upr"]
+
+# Plots the regression, observed data and prediction interval
+ggplot(mapping = aes(x = Ins)) +
+  geom_point(data = bldlvl, aes(y = Cpep, color = "Observed Data"), size = 1) +
+  geom_line(data = seq_data, aes(y = fit, color = "Fitted Line"), size = 1) +
+  geom_ribbon(data = seq_data, aes(ymin = lwr, ymax = upr, fill = "99% Prediction Interval"), alpha = 0.2) +
+  scale_color_manual(name = "Legend", 
+                     values = c("Observed Data" = "black", "Fitted Line" = "red")) +
+  scale_fill_manual(name = "Legend", 
+                    values = c("99% Prediction Interval" = "pink")) +
+  guides(fill = guide_legend(override.aes = list(color = "pink", alpha = 0.2))) +
+  labs(x = "Insulin (pmol/L)", y = "C-peptide (pmol/L)")
+```
+
+#### Confidence Intervals for the simple model including the intercept (as the AIC, ANOVA and CV indicates this is better)
+
+```{r}
+# Extracts the estimate and variance of Model 1's coefficient
+beta.hat <- coef(lin_fit_noint)
+V.beta <- vcov(lin_fit_noint)
+sigma.beta <- sqrt(diag(V.beta))
+
+# 99% CI
+c(beta.hat + qt(.995,df=1254)*sigma.beta, beta.hat - qt(.995,df=1254)*sigma.beta)
+
+# 95% CI
+c(beta.hat + qt(.975,df=1254)*sigma.beta, beta.hat - qt(.975,df=1254)*sigma.beta)
+
+# 90% CI
+c(beta.hat + qt(.95,df=1254)*sigma.beta, beta.hat - qt(.95,df=1254)*sigma.beta)
+```
+
+## Task 2
+
+### Larger comparable model
+
+#### First we use back selection on a larger model, to find relevant explanatory variables (Year was not included, but is removed quickly if included anyway)
+
+#### Model 2
+
+```{R }
+# Model 2 linear regression (variable named mod_1 as we coded this before writing the report)
+mod_1 <- lm(Cpep ~ 1 + Ins + I(Ins^2) + I(Ins^3) + I(Ins^(1/2)) + log(Ins), data = bldlvl)
+
+# Use commented out model for example overfitting in the report
+
+#mod_1 <- lm(Cpep ~ 1 + Ins + I(Ins^2) + I(Ins^3) + I(Ins^4) + I(Ins^5) + I(Ins^(1/2)) + I(Ins^(1/3)) + I(Ins^(1/4)) + log(Ins), data = bldlvl)
+```
+
+#### I use backward selection based on AIC to reduce the terms
+
+```{R }
+# AIC Backselection
+step_mod_AIC <- step(mod_1)
+
+# Residual plots and metrics
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(step_mod_AIC)
+summary(step_mod_AIC)
+AIC(step_mod_AIC)
+cv(step_mod_AIC)
+anova(step_mod_AIC, lin_fit_noint)
+```
+
+#### Plot with data
+
+```{r}
+# Makes a sequence of predictions and 99% prediction intervals along the insulin scale
+seq_data <- data.frame(Ins = seq(min(bldlvl$Ins), max(bldlvl$Ins), length.out = 100))
+
+pred <- predict(step_mod_AIC, seq_data, interval = "prediction", level = 0.99)
+
+seq_data$fit <- pred[, "fit"]
+seq_data$lwr <- pred[, "lwr"]
+seq_data$upr <- pred[, "upr"]
+
+# Plots the regression, observed data and prediction interval
+ggplot(mapping = aes(x = Ins)) +
+  geom_point(data = bldlvl, aes(y = Cpep, color = "Observed Data"), size = 1) +
+  geom_line(data = seq_data, aes(y = fit, color = "Fitted Line"), size = 1) +
+  geom_ribbon(data = seq_data, aes(ymin = lwr, ymax = upr, fill = "99% Prediction Interval"), alpha = 0.2) +
+  scale_color_manual(name = "Legend", 
+                     values = c("Observed Data" = "black", "Fitted Line" = "red")) +
+  scale_fill_manual(name = "Legend", 
+                    values = c("99% Prediction Interval" = "red")) +
+  guides(fill = guide_legend(override.aes = list(color = "red", alpha = 0.2))) +
+  labs(x = "Insulin (pmol/L)", y = "C-peptide (pmol/L)")
+```
+
+
+#### I Also use back selection with the F-test, they agree
+
+```{r}
+# F-test Backselection
+step_mod_ANOVA <- step(mod_1, test="F")
+
+# Residual Plots and metrics
+par(mfrow=c(2,2))
+plot(step_mod_ANOVA)
+summary(step_mod_ANOVA)
+
+# (This agrees with AIC backselection)
+```
+
+#### Comparing this against the linear model from task 1
+
+```{r}
+# ANOVA comparison
+anova(step_mod_AIC, lin_fit_noint)
+
+# AIC comparison
+AIC(step_mod_AIC, lin_fit_noint)
+
+# MSE CV comparison
+cv(step_mod_AIC)
+cv(lin_fit_noint)
+
+# adj r squared comparison
+summary(step_mod_AIC)$adj.r.squared
+summary(lin_fit_noint)$adj.r.squared
+```
+
+### Transformation for residuals
+
+#### Multiple trnasformations attempted
+
+```{r}
+# Using the boxcox method to find a C-pep transformation
+bc <- boxcox(step_mod_AIC, lambda = seq(-2, 2, by = 0.01))
+lam <- print(bc$x[which.max(bc$y)])
+
+# Multiple transformations attempted (more than whats show here)
+mod_res1 <- lm(I(log(Cpep)) ~ 1 + Ins + I(Ins^2) + I(Ins^3) + I(Ins^4) + I(Ins^5) + I(Ins^(1/2)) + I(Ins^(1/3)) + I(Ins^(1/4)) + log(Ins), data = bldlvl)
+
+mod_res2 <- lm(I(sqrt(Cpep)) ~ 1 + Ins + I(Ins^2) + I(Ins^3) + I(Ins^4) + I(Ins^5) + I(Ins^(1/2)) + I(Ins^(1/3)) + I(Ins^(1/4)) + log(Ins), data = bldlvl)
+
+mod_res3 <- lm(I(Cpep^(1/4)) ~ 1 + I(Ins^2) + I(Ins^3) + I(Ins^(1/2)), data = bldlvl)
+
+# Plots of residuals (quartic root chosen qualitatively)
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(step_mod_AIC)
+
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(mod_res1)
+
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(mod_res2)
+
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(mod_res3)
+
+
+```
+
+#### Plotting the transformed model
+
+```{r}
+# Model 3
+step_mod_res <- mod_res3
+
+# Residual plot and regression summary
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(step_mod_res)
+summary(step_mod_res)
+
+# Makes a sequence of predictions and 99% prediction intervals along the insulin scale
+seq_data <- data.frame(Ins = seq(min(bldlvl$Ins), max(bldlvl$Ins), length.out = 100))
+
+pred <- predict(step_mod_res, seq_data, interval = "prediction", level = 0.99)
+
+# Here we transform the predictions back to the original scale of the C-pep
+seq_data$fit <- pred[, "fit"]^4
+seq_data$lwr <- pred[, "lwr"]^4
+seq_data$upr <- pred[, "upr"]^4
+
+# Plots the regression, observed data and prediction interval
+ggplot(mapping = aes(x = Ins)) +
+  geom_point(data = bldlvl, aes(y = Cpep, color = "Observed Data"), size = 1) +
+  geom_line(data = seq_data, aes(y = fit, color = "Fitted Line"), size = 1) +
+  geom_ribbon(data = seq_data, aes(ymin = lwr, ymax = upr, fill = "99% Prediction Interval"), alpha = 0.2) +
+  scale_color_manual(name = "Legend", 
+                     values = c("Observed Data" = "black", "Fitted Line" = "red")) +
+  scale_fill_manual(name = "Legend", 
+                    values = c("99% Prediction Interval" = "red")) +
+  guides(fill = guide_legend(override.aes = list(color = "red", alpha = 0.2))) +
+  labs(x = "Insulin (pmol/L)", y = "C-peptide (pmol/L)")
+```
+
+## Task 3
+
+#### I use 3 models, linear_nointercept, larger backselection model, and transformed for residuals models
+
+```{r}
+# Inputs the childrens insulin levels
+child_ins <- data.frame(Ins=c(4657, 1099))
+
+# creates 95% prediction intervals for each model, and the childrens insulin
+predictions_lin_noint <- predict(lin_fit_noint, newdata = child_ins, interval = "confidence", level = 0.95)
+predictions_larger <- predict(step_mod_AIC, newdata = child_ins, interval = "confidence", level = 0.95)
+predictions_res <- predict(step_mod_res, newdata = child_ins, interval = "confidence", level = 0.95)
+
+# Transforms Model 3's prediction back to the original scale
+predictions_res <- predictions_res^4
+
+# Prints predictions
+print(predictions_lin_noint)
+print(predictions_larger)
+print(predictions_res)
+```
+
+#### Perform z-tests on the babies insulin levels
+
+```{r}
+#Insulin levels of babies
+F_Ins <- 4657 
+L_Ins <- 1099
+
+# Sample mean and standard deviation
+mean_Ins <- mean(bldlvl$Ins)
+sd_Ins <- sd(bldlvl$Ins)
+
+# Z-score for F and L
+z_F <- (F_Ins - mean_Ins) / sd_Ins
+z_L <- (L_Ins - mean_Ins) / sd_Ins
+
+# Z-scores for quantiles specified on report, and of babies
+qnorm(0.9999) #3.719016
+qnorm(0.9986) #2.988882
+z_F #14.42033
+z_L #2.995693
+
+# Quantiles
+pnorm(z_F) #1, "off the charts"
+pnorm(z_L) #0.9986309
+```
+
+
+
+

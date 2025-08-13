@@ -1,0 +1,1 @@
+It seems only logical: if A is better than B, and B is better than C, then A is better than C. Right? Not necessarily

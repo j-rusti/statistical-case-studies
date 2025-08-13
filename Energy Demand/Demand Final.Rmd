@@ -1,0 +1,668 @@
+  -------------
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, error=FALSE, warning=FALSE, comment=NA)
+# switch this to TRUE to save figures in separate files
+savefigs <- FALSE
+```
+
+## Load packages
+
+```{r }
+library("ggplot2")
+library("dplyr")
+library("cv")
+library("MASS")
+library("numbers")
+library("boot")
+library("lubridate")
+
+```
+
+## Load our dataset.
+
+```{r }
+# reads the csv file, creates a factor weekend variable, factor month variables, and reassigns year as start_year and start_year as year, (we did this as we used "year" in our stats to begin with and realised we wnted to witch to start year instead)
+# 
+dem <- read.csv(file = "SCS_demand_modelling.csv", stringsAsFactors = FALSE)
+dem <- dem %>%
+  rename(gross = demand_gross) %>%
+  mutate(
+    weekend = ifelse(wdayindex == 0 | wdayindex == 6, 1, 0),
+    weekend = as.factor(weekend),
+    monthindex = as.factor(monthindex),
+    true_year = year - 1991 , # Adjust the year to start from zero
+    year = start_year - 1991
+  )
+```
+
+
+```{r}
+# Plots each weekday, and creates a regession for each separately
+ggplot(dem, aes(TE, gross,color=as.factor(wdayindex))) + geom_point() +
+  stat_smooth(method = "gam")
+
+models <- list()
+
+for (i in 0:6) {
+  subset_data <- dem %>% filter(wdayindex == i)
+  models[[i+1]] <- lm(gross ~ TE, data = subset_data)
+}
+
+# Print summaries of models for each week day
+for (i in 1:7) {
+  cat("Summary for wdayindex =", i-1, "\n")
+  print(summary(models[[i]]))
+}
+
+# More legible intercept & slope of gross/TE for each weekday
+coefficients <- dem %>% mutate(wdayindex = as.factor(wdayindex)) %>% group_by(wdayindex) %>%
+              summarise(Intercept = coef(lm(gross ~ TE))[1],
+                        Slope = coef(lm(gross ~ TE))[2]
+              )
+
+print(coefficients)
+
+```
+
+## Creation of TA metric
+
+```{r}
+# Read the hourly temp file
+hourlytemp <- read.csv(file = "SCS_hourly_temp.csv", stringsAsFactors = FALSE)
+
+# Use lubricate to extract the date and time
+hourlytemp <- hourlytemp %>%
+  
+  mutate(date = as.character(Date)) %>%
+  
+  mutate(date = dmy_hm(Date)) %>% 
+  
+  # Extract the month
+  mutate(month = month(date, label = TRUE, abbr = TRUE)) %>%
+
+  # Filter for specific months and years
+  filter(month %in% c("Jan", "Feb", "Mar", "Nov", "Dec")) %>%
+  
+  filter(!(year(date) == 1991 & month(Date) %in% c(1, 2, 3))) %>%
+  
+  filter(!(year(date) == 2015)) %>%
+  
+  filter(!(year(date) == 2014 & month(Date) %in% c(11, 12)))
+
+# Choose our weighting for TA, we tried multiple
+weights <- c(avg = 0.15, max = 0.7, min = 0.15)
+
+# Section each day
+hourlytemp$day_group <- rep(1:(nrow(hourlytemp) / 24), each = 24)
+
+# Extract the daily temp metrics
+daily_temp_summary <- hourlytemp %>%
+  group_by(day_group) %>%
+  summarize(
+    avg_temp = mean(temp, na.rm = TRUE),
+    max_temp = max(temp, na.rm = TRUE),
+    min_temp = min(temp, na.rm = TRUE)
+  )
+
+# Creates the weigted average of temp metrics
+TA_temp <- weights["avg"] * daily_temp_summary$avg_temp + 
+                         weights["max"] * daily_temp_summary$max_temp + 
+                         weights["min"] * daily_temp_summary$min_temp
+
+# Add the alternate temp to the larger dataset
+dem <- dem %>%
+  mutate(TA = TA_temp)
+```
+
+```{r}
+# Finds 10 minimum and maximum gross values for the two datasets
+top_10_temp_dem <- dem %>%
+  arrange(desc(temp)) %>% 
+  head(10) 
+
+top_10_temp_hourly <- hourlytemp %>%
+  arrange(desc(temp)) %>%  
+  head(10)
+
+print(top_10_temp_dem)
+print(top_10_temp_hourly)
+
+top_10_min_temp_dem <- dem %>%
+  arrange(temp) %>% 
+  head(10) 
+
+top_10_min_temp_hourly <- hourlytemp %>%
+  arrange(temp) %>% 
+  head(10)
+
+print(top_10_min_temp_dem)
+print(top_10_min_temp_hourly)
+```
+
+## Creation of Moving average TA
+
+```{r}
+library("zoo")
+
+# Define the number of days for the moving average
+n_days <- 3 
+
+# Compute TA_temp
+daily_temp_summary <- daily_temp_summary %>%
+  mutate(TA_temp = weights["avg"] * avg_temp + 
+                   weights["max"] * max_temp + 
+                   weights["min"] * min_temp)
+
+# Remove NAs
+daily_temp_summary <- daily_temp_summary %>%
+  mutate(TA_temp = ifelse(is.na(TA_temp), mean(TA_temp, na.rm = TRUE), TA_temp))
+
+# Compute the moving average TA
+daily_temp_summary <- daily_temp_summary %>%
+  mutate(MA_TA = rollapply(TA_temp, width = n_days, FUN = mean, fill = NA, align = "right", partial = TRUE))
+
+head(daily_temp_summary)
+
+# Add this to the main dataset
+dem <- dem %>%
+  mutate(MA_TA = daily_temp_summary$MA_TA)
+```
+
+## Attempting too removing bias and confounders
+
+### TE
+
+```{r}
+# Box plots for climate covariate against temporal covariates
+boxplot(TE ~ year, data = dem, xlab = "Year", ylab = "TE", main = "TE by Year")
+boxplot(TE ~ monthindex, data = dem, xlab = "Month", ylab = "TE", main = "TE by Month")
+boxplot(TE ~ weekend, data = dem, xlab = "Weekend", ylab = "TE", main = "TE by Weekend")
+
+
+# fit and backselect climate covariate vs temporal covariates many models
+lin_fit1 <- lm(TE ~ year + I(year^2) + I(year^3) + I(year^1/2) + monthindex + weekend, data = dem)
+lin_fit1 <- step(lin_fit1)
+
+# Plots
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(lin_fit1)
+summary(lin_fit1)
+AIC(lin_fit1)
+cv(lin_fit1)
+```
+
+### TA
+
+```{r}
+# Box plots for climate covariate against temporal covariates
+boxplot(TA ~ year, data = dem, xlab = "Year", ylab = "TA", main = "TA by Year")
+boxplot(TA ~ monthindex, data = dem, xlab = "Month", ylab = "TA", main = "TA by Month")
+boxplot(TA ~ weekend, data = dem, xlab = "Weekend", ylab = "TA", main = "TA by Weekend")
+
+
+# fit and backselect climate covariate vs temporal covariates many models
+lin_fit1 <- lm(TA ~ year + I(year^2) + I(year^3) + I(year^1/3) + monthindex + weekend, data = dem)
+lin_fit1 <- step(lin_fit1)
+
+# Plots
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(lin_fit1)
+summary(lin_fit1)
+AIC(lin_fit1)
+cv(lin_fit1)
+```
+
+### MA_TA
+
+```{r}
+# Box plots for climate covariate against temporal covariates
+boxplot(MA_TA ~ year, data = dem, xlab = "Year", ylab = "TA", main = "TA by Year")
+boxplot(MA_TA ~ monthindex, data = dem, xlab = "Month", ylab = "TA", main = "TA by Month")
+boxplot(MA_TA ~ weekend, data = dem, xlab = "Weekend", ylab = "TA", main = "TA by Weekend")
+
+
+# fit and backselect climate covariate vs temporal covariates many models
+lin_fit1 <- lm(MA_TA ~ year + I(year^2) + I(year^3) + I(year^1/3) + monthindex + weekend, data = dem)
+lin_fit1 <- step(lin_fit1)
+
+# Plots
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(lin_fit1)
+summary(lin_fit1)
+AIC(lin_fit1)
+cv(lin_fit1)
+```
+
+### wind
+
+```{r}
+# Box plots for climate covariate against temporal covariates
+boxplot(wind ~ year, data = dem, xlab = "Year", ylab = "Wind", main = "Wind by Year")
+boxplot(wind ~ monthindex, data = dem, xlab = "Month", ylab = "Wind", main = "Wind by Month")
+boxplot(wind ~ weekend, data = dem, xlab = "Weekend", ylab = "Wind", main = "Wind by Weekend")
+
+# fit and backselect climate covariate vs temporal covariates many models
+lin_fit1 <- lm(wind ~ year + I(year^2) + I(year^3) + I(year^1/2) + I(year^1/3) + monthindex + weekend, data = dem)
+lin_fit1 <- step(lin_fit1)
+
+# Plots
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(lin_fit1)
+summary(lin_fit1)
+AIC(lin_fit1)
+cv(lin_fit1)
+```
+
+### Solar
+
+```{r}
+# Box plots for climate covariate against temporal covariates
+boxplot(solar_S ~ year, data = dem, xlab = "Year", ylab = "Solar", main = "Solar by Year")
+boxplot(solar_S ~ monthindex, data = dem, xlab = "Month", ylab = "Solar", main = "Solar by Month")
+boxplot(solar_S ~ weekend, data = dem, xlab = "Weekend", ylab = "Solar", main = "Solar by Weekend")
+
+
+# fit and backselect climate covariate vs temporal covariates many models
+lin_fit1 <- lm(solar_S ~ year + I(year^2) + I(year^3) + I(year^1/2) + I(year^1/3) + monthindex + weekend, data = dem)
+
+# Here I use back selection the prune the low F-ratio to reduce complexity
+lin_fit1 <- step(lin_fit1)
+
+# Plots
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(lin_fit1)
+summary(lin_fit1)
+AIC(lin_fit1)
+cv(lin_fit1)
+```
+
+
+
+
+## Moving onto the actual full model
+
+```{r}
+# Box plots and scatter plots for demand against all covaraites
+boxplot(gross ~ year, data = dem, xlab = "Year", ylab = "gross", main = "gross by Year")
+boxplot(gross ~ monthindex, data = dem, xlab = "Month", ylab = "gross", main = "gross by Month")
+boxplot(gross ~ weekend, data = dem, xlab = "Weekend", ylab = "gross", main = "gross by Weekend")
+
+ggplot(dem, aes(x = TE, y = gross)) +
+  geom_point() +
+  labs(x = "Temperature", y = "Gross", title = "Gross vs Temperature")
+
+ggplot(dem, aes(x = wind, y = gross)) +
+  geom_point() +
+  labs(x = "Wind", y = "Gross", title = "Gross vs Wind")
+
+ggplot(dem, aes(x = solar_S, y = gross)) +
+  geom_point() +
+  labs(x = "Solar_S", y = "Gross", title = "Gross vs Solar_S")
+
+# Linear fit and backselect many models for demand
+gross_fit_TE <- lm(gross ~ year + I(year^2) + I(year^3) + I(year^1/2) + I(year^1/3)  + monthindex + weekend + TE + I(TE^2) + I(TE^1/2) + wind + solar_S, data = dem)
+gross_fit_TA <- lm(gross ~ year + I(year^2) + I(year^3) + I(year^1/2) + I(year^1/3)  + monthindex + weekend + TA + I(TA^2) + I(TA^1/2) + wind + solar_S, data = dem)
+gross_fit_MA_TA <- lm(gross ~ year + I(year^2) + I(year^3) + I(year^1/2) + I(year^1/3)  + monthindex + weekend + MA_TA + I(MA_TA^2) + I(MA_TA^1/2) + wind + solar_S, data = dem)
+gross_fit_TE <- step(gross_fit_TE)
+gross_fit_TA <- step(gross_fit_TA)
+gross_fit_MA_TA <- step(gross_fit_MA_TA)
+
+# Include important covariate transforms
+gross_fit_TA <- lm(gross ~ year + I(year^2) + I(year^3)  + monthindex + weekend + TA + I(TA^2) + wind + solar_S, data = dem)
+gross_fit_MA_TA <- lm(gross ~ year + I(year^2) + I(year^3)  + monthindex + weekend + MA_TA + I(MA_TA^2) + wind + solar_S, data = dem)
+```
+
+### Residuals over time
+
+```{r}
+# Residuals and ordering
+residuals <- residuals(gross_fit_TE)
+years <- dem$year
+time_index <- 1:length(residuals)
+
+# Create an empty plot
+plot(time_index, residuals, type = "p", pch = 16, col = "black", cex = 0.5,
+     xaxt = "n", xlab = "Year", ylab = "Residuals", main = "Residuals over Time")
+
+# Identify year positions for x-axis labels
+year_positions <- which(diff(years) != 0) 
+year_labels <- years[year_positions]
+
+# Add year labels to x-axis
+axis(1, at = year_positions, labels = year_labels + 1991, las = 2)
+
+# Add a horizontal line at zero for reference
+abline(h = 0, col = "red", lty = 2)
+```
+
+
+### TE metrics
+
+```{r}
+# TE model plots
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(gross_fit_TE)
+summary(gross_fit_TE)
+AIC(gross_fit_TE)
+cv(gross_fit_TE)
+```
+
+### TA metrics
+
+```{r}
+# TA model plots
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(gross_fit_TA)
+summary(gross_fit_TA)
+AIC(gross_fit_TA)
+cv(gross_fit_TA)
+```
+
+### MA TA metrics
+
+```{r}
+# MA TA model plots
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(gross_fit_MA_TA)
+summary(gross_fit_MA_TA)
+AIC(gross_fit_MA_TA)
+cv(gross_fit_MA_TA)
+```
+
+## Residual Problems
+
+### Box Cox transformation
+
+```{r}
+# Box cox likelihood graphs
+boxcox(gross_fit_TE)
+boxcox(gross_fit_TA)
+```
+
+### Transformation regression
+
+#### TE
+
+```{r}
+# Fit and assess a box cox transformed TE model
+tr_gross_fit_TE <- lm(I(gross^2) ~ year + I(year^2) + I(year^3)  + monthindex + weekend + TE + I(TE^2) + wind + solar_S, data = dem)
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(tr_gross_fit_TE)
+summary(tr_gross_fit_TE)
+AIC(tr_gross_fit_TE)
+cv(tr_gross_fit_TE)
+```
+
+#### TA
+
+```{r}
+# Fit and assess a box cox transformed TA model
+tr_gross_fit_TA <- lm(I(gross^2) ~ year + I(year^2) + I(year^3)  + monthindex + weekend + TA + I(TA^2) + wind + solar_S, data = dem)
+
+par(mfrow=c(2,2), mar = c(5, 5, 1.5, 1.5))
+plot(tr_gross_fit_TA)
+summary(tr_gross_fit_TA)
+AIC(tr_gross_fit_TA)
+cv(tr_gross_fit_TA)
+```
+
+```{r}
+ggplot(data = dem, aes(x = year, y = residuals(gross_fit_TE))) +
+  geom_point() +
+  geom_smooth(method = "loess") +
+  labs(x = "Year", y = "Residuals", title = "Residuals over Time")
+
+# Autocorrelation of residuals
+acf(residuals(gross_fit_TE), main = "Autocorrelation of Residuals")
+
+# Residuals against month
+ggplot(data = dem, aes(x = monthindex, y = residuals(gross_fit_TE))) +
+  geom_point() +
+  geom_smooth(method = "loess") +
+  labs(x = "Month", y = "Residuals", title = "Residuals over Time")
+
+# Autocorrelation of residuals
+acf(residuals(gross_fit_TE), main = "Autocorrelation of Residuals")
+```
+
+### Bootstrapping
+
+#### Checking residual time dependance
+```{r}
+# Plots of autocorrelation
+acf(residuals(gross_fit_TA), main = "Autocorrelation of Residuals")
+```
+
+#### Bootstrapping
+
+```{r}
+# Coefficient linear regression function
+boot_resid <- function(data, indices) {
+  d <- data[indices, ]
+  fit <- lm(gross ~ year + I(year^2) + I(year^3) + monthindex + weekend + 
+    TE + I(TE^2) + wind + solar_S, data = d)
+  return(coef(fit))
+}
+
+# Block bootstrap on coeffcients
+boot_results <- tsboot(dem, boot_resid, R = 100, l = 14, sim = "fixed")
+boot_coefs <- boot_results$t
+```
+
+```{r}
+# Creates a dataframe of coeffient estimates and CIs
+coef_names <- c("Intercept", "Year", "Year^{2}", "Year^{3}", "MonthJanuary", "MonthFebruary", "MonthMarch", "MonthApril", "WeekendYes", "TE", "TE^{2}", "Wind", "Solar_S")
+conf_ints <- apply(boot_coefs, 2, function(coef) quantile(coef, c(0.025, 0.975)))
+conf_est <- apply(boot_coefs, 2, function(coef) mean(coef))
+
+conf_ints_df <- data.frame(
+  Coefficient = coef_names,
+  Estimate = conf_est,
+  Lower = conf_ints[1, ],
+  Upper = conf_ints[2, ]
+)
+
+# Finds fitted values and residuals using these bootstrapped coefs, calculates R^2 with these residuals
+fitted_values <- conf_ints_df$Estimate[1] + 
+  conf_ints_df$Estimate[2] * dem$year + 
+  conf_ints_df$Estimate[3] * (dem$year)^2 + 
+  conf_ints_df$Estimate[4] * (dem$year)^3 + 
+  conf_ints_df$Estimate[5] * (dem$monthindex == 1) +  
+  conf_ints_df$Estimate[6] * (dem$monthindex == 2) +  
+  conf_ints_df$Estimate[7] * (dem$monthindex == 3) +  
+  conf_ints_df$Estimate[8] * (dem$monthindex == 4) +  
+  conf_ints_df$Estimate[9] * (dem$weekend == 1) +  
+  conf_ints_df$Estimate[10] * dem$TE + 
+  conf_ints_df$Estimate[11] * (dem$TE^2) + 
+  conf_ints_df$Estimate[12] * dem$wind + 
+  conf_ints_df$Estimate[13] * dem$solar_S
+  
+residuals_custom <- dem$gross - fitted_values
+
+ss_total <- sum((dem$gross - mean(dem$gross))^2)
+ss_residual <- sum(residuals_custom^2)
+r_squared <- 1 - (ss_residual / ss_total)
+r_squared
+```   
+
+## Changing Climates
+
+```{r}
+# Sets us origianl fit and original residuals
+orig_fit <- gross_fit_TE
+orig_resid <- residuals(orig_fit)
+
+# Creates a matrix of explanatory variables with year changed to 2013 (22 because of 0 indexing)
+dem_2013 <- dem
+dem_2013$year <- 22
+xp <- dem_2013[c("year", "monthindex", "weekend", "TE", "wind", "solar_S")]
+xp$monthindex <- factor(xp$monthindex, levels = levels(dem$monthindex))
+xp$weekend <- factor(xp$weekend, levels = levels(dem$weekend))
+climate_vec <- model.matrix(~ year + I(year^2) + I(year^3) + monthindex + 
+                           weekend + TE + I(TE^2) + wind + solar_S, data = xp)
+
+# Predicts climate using the explanatory variable matrix and bootstrapped coefficients
+climate_preds <- boot_coefs %*% t(climate_vec)
+
+# Performs prediction bootstrapping
+resampled_resids <- sample(orig_resid, size = nrow(climate_preds), replace = TRUE)
+climate_delta <- climate_preds - (predict(orig_fit, xp) + resampled_resids)
+climate_demand_estimates <- apply(climate_preds, 2, mean)
+
+# Compute 95% prediction interval
+climate_pred_CI_matrix <- apply(climate_delta, 2, function(d) {
+  quantile(d, probs = c(0.025, 0.975)) + climate_demand_estimates
+})
+
+# Combine results into a data frame
+climate_pred_df <- data.frame(
+  year = dem$year,  # Future year for all rows
+  coefficient_estimate = climate_demand_estimates,  # Mean bootstrapped prediction for each row
+  lower_CI = climate_pred_CI_matrix[1, ],  # Lower bound of the CI
+  upper_CI = climate_pred_CI_matrix[2, ]   # Upper bound of the CI
+)
+```
+
+```{r}
+# Takes the maximum upper CI prediction and the true annual peak demand and graphs them
+max_annual_climate_gross <- dem %>%
+  group_by(year) %>%
+  filter(gross == max(gross)) %>%
+  ungroup()
+
+max_annual_preds <- climate_pred_df %>%
+  group_by(year) %>%
+  filter(upper_CI == max(upper_CI)) %>%
+  ungroup() %>%
+  mutate(year = year + 1991) %>%
+  mutate(max_gross = max_annual_climate_gross$gross) %>%
+  filter(!(year == 2014))
+
+ggplot(max_annual_preds, aes(x = year)) +
+  geom_line(aes(y = coefficient_estimate, color = "Predictions"), size = 1) +  # Line for predicted values
+  geom_ribbon(aes(ymin = lower_CI, ymax = upper_CI, fill = "Prediction Intervals"), alpha = 0.2) + 
+  geom_point(aes(y = max_gross, color = "True Maximum Gross Demand"), size = 2) + 
+  labs(title = "Maximum Annual Predictions in 2013/2014 using each Years Climate \n and 95% Confidence Intervals", 
+       x = "Year", y = "Predicted Demand (gross)", color = "Legend", fill = "Legend") + 
+  scale_color_manual(values = c("Predictions" = "blue", "True Maximum Gross Demand" = "red")) +
+  scale_fill_manual(values = c("Prediction Intervals" = "blue"))
+
+```
+
+## Predictive Ability
+
+### 5-10 year cross validation algorithm
+
+```{r}
+# Define the range of years to loop over (we chnage this depending of the length of future prediction)
+years_to_predict <- 5:13
+
+# Initialize an empty list to store the confidence intervals for each year
+all_CIs_df <- data.frame()
+
+# Loop over each year
+for (year_cutoff in years_to_predict) {
+  
+  # Subset data upto the year cutoff
+  dem_subset <- dem[dem$year <= year_cutoff, ]  
+  
+  # Fit the model on the subset
+  orig_fit <- lm(gross ~ year + I(year^2) + I(year^3) + monthindex + weekend + 
+                   TE + I(TE^2) + wind + solar_S, data = dem_subset)
+  
+  # Compute residuals from the original model
+  orig_resid <- residuals(orig_fit)
+  
+  # Bootstrap function for coefficients
+  boot_resid <- function(data, indices) {
+    d <- data[indices, ]
+    fit <- lm(gross ~ year + I(year^2) + I(year^3) + monthindex + weekend + 
+      TE + I(TE^2) + wind + solar_S, data = d)
+    return(coef(fit))
+  }
+  
+  # Block bootstrap on coefficients
+  boot_results <- tsboot(dem_subset, boot_resid, R = 100, l = 12, sim = "fixed")
+  boot_coefs <- boot_results$t
+  
+  # Define future year for prediction (5 years later)
+  future_year <- year_cutoff + 5
+  
+  # Extract climate data for the future year from the full dataset
+  xp <- dem[dem$year == future_year, c("year", "monthindex", "weekend", "TE", "wind", "solar_S")]
+  
+  # Ensure factor levels match the training set
+  xp$monthindex <- factor(xp$monthindex, levels = levels(dem$monthindex))
+  xp$weekend <- factor(xp$weekend, levels = levels(dem$weekend))
+  Xp_vec <- model.matrix(~ year + I(year^2) + I(year^3) + monthindex + 
+                           weekend + TE + I(TE^2) + wind + solar_S, data = xp)
+  
+  # Compute bootstrapped predictions
+  boot_preds <- boot_coefs %*% t(Xp_vec)
+  
+  # Resample residuals
+  resampled_resids <- sample(orig_resid, size = nrow(boot_preds), replace = TRUE)
+  
+  # Compute prediction error
+  delta <- boot_preds - (predict(orig_fit, xp) + resampled_resids)
+  
+  coef_preds <- apply(boot_preds, 2, mean)
+  
+  # Compute 95% prediction intervals
+  pred_CI_matrix <- apply(delta, 2, function(d) {
+    quantile(d, probs = c(0.025, 0.975)) + coef_preds
+  })
+  
+  # Combine results into a data frame
+  pred_df <- data.frame(
+    year = rep(future_year, ncol(pred_CI_matrix)),  # Future year for all rows
+    coefficient_estimate = coef_preds,  # Mean bootstrapped prediction for each row
+    lower_CI = pred_CI_matrix[1, ],  # Lower bound of the CI
+    upper_CI = pred_CI_matrix[2, ]   # Upper bound of the CI
+  )
+
+  # Concatenate to the overall results data frame
+  all_CIs_df <- rbind(all_CIs_df, pred_df)
+}
+
+# Print out all prediction intervals for the years 1995-2018
+print(all_CIs_df)
+```
+
+### plotting the 5 year predtction
+
+```{r}
+# Finds true annual peak, and upper CI peak then plots this
+true_values <- dem[dem$year %in% (years_to_predict + 5), c("year", "gross", "X")]
+all_CIs_df <- all_CIs_df %>%
+  mutate(gross = true_values$gross, X = true_values$X)
+
+max_annual_gross <- true_values %>%
+  group_by(year) %>%
+  filter(gross == max(gross)) %>%
+  ungroup()
+
+max_annual_5_yr_preds <- all_CIs_df %>%
+  group_by(year) %>%
+  filter(upper_CI == max(upper_CI)) %>%
+  ungroup() %>%
+  mutate(max_gross = max_annual_gross$gross) %>%
+  mutate(year = year + 1990)
+
+ggplot(max_annual_5_yr_preds, aes(x = year)) +
+  geom_line(aes(y = coefficient_estimate, color = "Predictions"), size = 1) +  # Line for predicted values
+  geom_ribbon(aes(ymin = lower_CI, ymax = upper_CI, fill = "Prediction Intervals"), alpha = 0.2) + 
+  geom_point(aes(y = max_gross, color = "True Maximum Gross Demand"), size = 2) + 
+  labs(title = "Maximum Annual 5-Year Predictions \n and 95% Confidence Intervals", 
+       x = "Year", y = "Predicted Demand (gross)", color = "Legend", fill = "Legend") + 
+  scale_color_manual(values = c("Predictions" = "blue", "True Maximum Gross Demand" = "red")) +
+  scale_fill_manual(values = c("Prediction Intervals" = "blue"))
+
+
+```
+
+
+
+

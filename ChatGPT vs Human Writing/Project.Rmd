@@ -1,0 +1,1142 @@
+---
+title: "ChatGPTCode"
+author: "Me"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+source('GPTCode.R')
+
+```
+```{r Corpus}
+numwords <- 500 #number of words to trim the test set down into
+topic <- 4 #Architecture
+humanM <- loadCorpus("essays/functionwords/humanfunctionwords/","functionwords")
+GPTM <- loadCorpus("essays/functionwords/GPTfunctionwords/","functionwords")
+```
+```{r}
+GPTM$features[[4]]
+```
+
+```{r}
+sampled_numbers <- sample(1:110, size = 10, replace = FALSE)
+
+print(sampled_numbers)
+
+topics <- c(43, 51, 40, 85, 24, 72, 80, 99, 97, 47)
+```
+```{r Remove functionwords}
+# Set up the numwords values and initialize an empty vector for scores
+numword_values <- c(10, 50, 100, 500, 1000)  # Add other values if needed
+cost_values <- c(0.1, 100 ,0.1, 0.001, 0.001)
+k_values <- c(66, 53, 51, 31, 16)
+P_values <- c(69, 70, 57, 3, 11)
+
+samples <- 30
+DAaccuracy <- numeric(length(numword_values))
+
+RFaccuracy <- numeric(length(numword_values))
+
+KNNaccuracy <- numeric(length(numword_values))
+
+SVMaccuracy <- numeric(length(numword_values))
+
+# Calculate scores for each numword value
+for (i in seq_along(numword_values)) {
+  DAtemp <- NULL
+  KNNtemp <- NULL
+  RFtemp <- NULL
+  SVMtemp <- NULL
+  for (topic in topics)
+    for (j in 1:samples)
+      DAmetric <- DALOOCV_topic(topic, numwords=numword_values[i])
+      DAtemp <- c(DAtemp, sum(DAmetric[[1]]==DAmetric[[2]])/length(DAmetric[[1]]))
+    
+      KNNmetric <- KNNLOOCV_topic(topic, numwords=numword_values[i], k=k_values[i])
+      KNNtemp <- c(KNNtemp, sum(KNNmetric[[1]]==KNNmetric[[2]])/length(KNNmetric[[1]]))
+    
+      RFmetric <- RFLOOCV_topic(topic, numwords=numword_values[i], P=P_values[i])
+      RFtemp <- c(RFtemp, sum(RFmetric[[1]]==RFmetric[[2]])/length(RFmetric[[1]]))
+      
+      SVMmetric <- SVMLOOCV_topic(topic, numwords=numword_values[i], kernel='linear', cost = cost_values[i])
+      SVMtemp <- c(SVMtemp, sum(SVMmetric[[1]]==SVMmetric[[2]])/length(SVMmetric[[1]]))
+      
+  DAaccuracy[i] <- mean(DAtemp)
+  KNNaccuracy[i] <- mean(KNNtemp)
+  RFaccuracy[i] <- mean(RFtemp)
+  SVMaccuracy[i] <- mean(SVMtemp)
+}
+```
+```{r Plot Performance Metric}
+library(ggplot2)
+library(tidyr)
+
+# Create a data frame from the calculated accuracies
+accuracy_data <- data.frame(
+  numwords = numword_values,
+  DA = DAaccuracy,
+  KNN = KNNaccuracy,
+  RF = RFaccuracy,
+  SVM = SVMaccuracy
+)
+
+# Convert the data to long format for easier plotting with ggplot2
+accuracy_long <- pivot_longer(accuracy_data, cols = c(DA, KNN, RF, SVM), 
+                              names_to = "Method", values_to = "Accuracy")
+
+# Plot the accuracies
+ggplot(accuracy_long, aes(x = numwords, y = Accuracy, color = Method)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  scale_x_continuous(breaks = numword_values) +
+  labs(title = "Model Accuracies vs. Number of Words",
+       x = "Number of Words",
+       y = "Accuracy",
+       color = "Method") +
+      theme_minimal()
+```
+```{r}
+print('DA accuracy')
+print(DAaccuracy)
+print('KNNaccuracy')
+print(KNNaccuracy)
+print('RF accuracy')
+print(RFaccuracy)
+print('SVM accuracya')
+print(SVMaccuracy)
+
+```
+
+```{r whole and topic comparison}
+DA_top <- NULL
+DA_who <- NULL
+KNN_top <- NULL
+KNN_who <- NULL
+RF_top <- NULL
+RF_who <- NULL
+SVM_top <- NULL
+SVM_who <- NULL
+
+for (topic in topics){
+  metric <- DALOOCV_topic(topic)
+  DA_top <- c(DA_top, sum(metric[[1]] == metric[[2]])/length(metric[[1]]))
+  metric <- DALOOCV_whole(topic)
+  DA_who <- c(DA_who, sum(metric[[1]] == metric[[2]])/length(metric[[1]]))
+  
+  print(1)
+  
+  metric <- KNNLOOCV_topic(topic, k=1)
+  KNN_top <- c(KNN_top, sum(metric[[1]] == metric[[2]])/length(metric[[1]]))
+  metric <- KNNLOOCV_whole(topic, k=1)
+  KNN_who <- c(KNN_who, sum(metric[[1]] == metric[[2]])/length(metric[[1]]))
+  
+  print(1)
+  
+  metric <- RFLOOCV_topic(topic, P=1)
+  RF_top <- c(RF_top, sum(metric[[1]] == metric[[2]])/length(metric[[1]]))
+  metric <- RFLOOCV_whole(topic, P=1)
+  RF_who <- c(RF_who, sum(metric[[1]] == metric[[2]])/length(metric[[1]]))
+  
+  metric <- SVMLOOCV_topic(topic, kernel='linear')
+  SVM_top <- c(SVM_top, sum(metric[[1]] == metric[[2]])/length(metric[[1]]))
+  metric <- SVMLOOCV_whole(topic, kernel='linear')
+  SVM_who <- c(SVM_who, sum(metric[[1]] == metric[[2]])/length(metric[[1]]))
+}
+```
+
+```{r}
+print('DA Accuracy Topic:')
+print(mean(DA_top))
+print('DA Accuracy Whole:')
+print(mean(DA_who))
+print('DA Accuracy Whole:')
+print(mean(DA_who))
+
+
+print('KNN Accuracy Topic:')
+print(mean(KNN_top))
+print('KNN Accuracy Whole:')
+print(mean(KNN_who))
+print('RF Accuracy Topic:')
+print(mean(RF_top))
+print('RF Accuracy Whole:')
+print(mean(RF_who))
+print('SVM Accuracy Topic:')
+print(mean(SVM_top))
+print('SVM Accuracy Whole:')
+print(mean(SVM_who))
+```
+
+
+```{r}
+MDS_topic(1:110)
+```
+
+
+
+```{r Multi k plot}
+RFPplot_topic(topic, n=69, samples=1)
+```
+```{r MDA}
+```
+```{r MDA}
+names<-GPTM$authornames
+
+MDS_topic(8)
+
+d<-MDS_summed(c(1:110))
+# number by topic
+
+distance_vector <- unlist(d)
+
+# Sort the distances and get the indices of the two smallest
+sorted_distances <- sort(distance_vector)
+
+# Get the smallest and the second smallest distances
+min <- sorted_distances[1:10]
+indexes <- NULL
+
+# Get the index of the minimum distance in the original list
+for (i in min){
+  min_index <- which(distance_vector == i, arr.ind = TRUE)
+  indexes <- c(indexes, min_index)
+}
+
+min
+indexes
+
+names[indexes]
+
+max <- tail(sorted_distances, 10)
+indexes <- NULL
+
+# Get the index of the minimum distance in the original list
+for (i in max){
+  max_index <- which(distance_vector == i, arr.ind = TRUE)
+  indexes <- c(indexes, max_index)
+}
+
+max
+indexes
+
+names[indexes]
+
+```
+```{r Basic LOOCV test}
+RFmetric <- SVMLOOCV_topic(33, numwords=100)
+cat("RF Basic Score:", sum(RFmetric[[1]]==RFmetric[[2]])/length(RFmetric[[2]]), "\n")
+
+
+testtopic <- 4
+traintopic <- c(3, 6)
+
+RFmetric <- SVMLOOCV_distinct(testtopic, traintopic, numwords=100)
+cat("RF Basic Score:", sum(RFmetric[[1]]==RFmetric[[2]])/length(RFmetric[[2]]), "\n")
+```
+```{r 100 words RF hyper parameters}
+topic <- 33
+numwords <- FALSE
+samples <- 10000
+P_list <- c(10, 30, 50, 70)
+mean <- NULL
+
+accuracy <- NULL
+for (P in P_list){
+  accuracy <- NULL
+  for (i in samples){
+    metric <- RFLOOCV_topic(topic, numwords=numwords, P=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+```
+```{r}
+samples <- 10000
+P_list <- c(20, 25, 30, 35, 40)
+mean <- NULL
+
+accuracy <- NULL
+for (P in P_list){
+  accuracy <- NULL
+  for (i in samples){
+    metric <- RFLOOCV_topic(topic, numwords=numwords, P=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+```
+```{r}
+samples <- 20
+P_list <- c(2, 4, 6, 8, 10)
+mean <- NULL
+
+
+accuracy <- NULL
+for (P in P_list){
+  accuracy <- NULL
+  for (i in samples){
+    metric <- RFLOOCV_topic(topic, numwords=numwords, P=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+```
+```{r}
+samples <- 10
+P_list <- c(10, 20, 30, 40,  50, 60, 70)
+mean <- NULL
+
+accuracy <- NULL
+for (P in P_list){
+  accuracy <- NULL
+  for (i in samples){
+    metric <- RFLOOCV_topic(33, numwords=100, P=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+```
+```{r 100 words RF hyper parameters}
+topic <- 33
+numwords <- 100
+samples <- 10000
+P_list <- c(10, 30, 50, 70)
+mean <- NULL
+
+accuracy <- NULL
+for (P in P_list){
+  accuracy <- NULL
+  for (i in samples){
+    metric <- RFLOOCV_topic(topic, numwords=numwords, P=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+```
+```{r}
+samples <- 10000
+P_list <- c(20, 25, 30, 35, 40)
+mean <- NULL
+
+accuracy <- NULL
+for (P in P_list){
+  accuracy <- NULL
+  for (i in samples){
+    metric <- RFLOOCV_topic(topic, numwords=numwords, P=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+```
+```{r}
+samples <- 20
+P_list <- c(2, 4, 6, 8, 10)
+mean <- NULL
+
+
+accuracy <- NULL
+for (P in P_list){
+  accuracy <- NULL
+  for (i in samples){
+    metric <- RFLOOCV_topic(topic, numwords=numwords, P=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+```
+```{r}
+samples <- 10
+P_list <- c(10, 20, 30, 40,  50, 60, 70)
+mean <- NULL
+
+accuracy <- NULL
+for (P in P_list){
+  accuracy <- NULL
+  for (i in samples){
+    metric <- RFLOOCV_topic(33, numwords=100, P=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+```
+```{r Generate Perfomance Metric}
+# Set up the numwords values and initialize an empty vector for scores
+numword_values <- c(10, 20, 40, 80, 160, 320)  # Add other values if needed
+DAaccuracy <- numeric(length(numword_values))
+DAprecision <- numeric(length(numword_values))
+
+RFaccuracy <- numeric(length(numword_values))
+RFprecision <- numeric(length(numword_values))
+
+RFaccuracy <- numeric(length(numword_values))
+KNNprecision <- numeric(length(numword_values))
+
+# Calculate scores for each numword value
+for (i in seq_along(numword_values)) {
+  DAmetric <- metrics_topic(topic, numwords = numword_values[i], type='DA')
+  DAaccuracy[i] <- DAmetric[1]
+  DAprecision[i] <- DAmetric[2]
+  
+  RFmetric <- metrics_topic(topic, numwords = numword_values[i], type='RF')
+  RFaccuracy[i] <- RFmetric[1]
+  RFprecision[i] <- RFmetric[2]
+  
+  KNNmetric <- metrics_topic(topic, numwords = numword_values[i], type='KNN', k=1)
+  KNNaccuracy[i] <- KNNmetric[1]
+  KNNprecision[i] <- KNNmetric[2]
+}
+```
+```{r Plot Performance Metric}
+# Plot the scores against numwords
+plot(numword_values, DAaccuracy, type = "b", pch = 19, col = "blue",
+     xlab = "Number of Words", ylab = "DA Accuracy",
+     main = "DA Accuracy vs Number of Words")
+
+plot(numword_values, DAprecision, type = "b", pch = 19, col = "blue",
+     xlab = "Number of Words", ylab = "DA Precision",
+     main = "DA Precision vs Number of Words")
+
+
+# Plot the scores against numwords
+plot(numword_values, RFaccuracy, type = "b", pch = 19, col = "blue",
+     xlab = "Number of Words", ylab = "RF Accuracy",
+     main = "RF Accuracy vs Number of Words")
+
+plot(numword_values, RFprecision, type = "b", pch = 19, col = "blue",
+     xlab = "Number of Words", ylab = "RF Precision",
+     main = "RF Precision vs Number of Words")
+
+
+# Plot the scores against numwords
+plot(numword_values, KNNaccuracy, type = "b", pch = 19, col = "blue",
+     xlab = "Number of Words", ylab = "KNN Accuracy",
+     main = "KNN Accuracy vs Number of Words")
+
+plot(numword_values, KNNprecision, type = "b", pch = 19, col = "blue",
+     xlab = "Number of Words", ylab = "KNN Precision",
+     main = "KNN Precision vs Number of Words")
+```
+```{r Testing}
+
+
+RFmetric <- KNNLOOCV_topic(topic, k = 1)
+RFmetric <- DALOOCV_topic(topic, removewords=c(1:10), numwords=500)
+RFmetric <- RFLOOCV_topic(topic, P=1)
+
+cat("RF Basic Score:", sum(RFmetric[[1]]==RFmetric[[2]])/length(RFmetric[[2]]), "\n")
+
+RFmetric <- KNNLOOCV_2(topic, k = 1)
+
+cat("RF Basic Score:", sum(RFmetric[[1]]==RFmetric[[2]])/length(RFmetric[[2]]), "\n")
+
+print(RFmetric)
+
+```
+```{r}
+
+
+P_values <- c(1, 4, 8, 16, 24, 32, 40, 48, 55, 67, 71)
+
+RFaccuracy <- numeric(length(P_values))
+RFprecision <- numeric(length(P_values))
+
+
+
+for (i in seq_along(P_values)) {
+  RFmetric <- metrics_topic(topic, numwords=500, P = P_values[i], type='RF')
+  RFaccuracy[i] <- RFmetric[1]
+  RFprecision[i] <- RFmetric[2]
+}
+```
+```{r}
+# Plot the scores against numwords
+plot(P_values, RFaccuracy, type = "b", pch = 19, col = "blue",
+     xlab = "P", ylab = "RF Accuracy",
+     main = "RF Accuracy vs P")
+
+plot(P_values, RFprecision, type = "b", pch = 19, col = "blue",
+     xlab = "P", ylab = "RF Precision",
+     main = "RF Precision vs P")
+
+```
+```{r}
+metric <- SVMLOOCV_topic(33, removewords=c(1:69))
+
+accuracy <- sum(metric[[1]] == metric[[2]]) / length(metric[[2]])
+confusion <- confusionMatrix(metric[[1]], metric[[2]])
+precision <- confusion$byClass['Precision']
+print(list(accuracy, precision))
+metric
+
+```
+
+```{r}
+features <- combine_topics(topics)
+
+KNNLOOCV_topic(topics, k=1)
+
+```
+
+```{r KNN plots}
+KNNkplot <- function(topics, numwords=FALSE, groupsize=FALSE, removewords=FALSE, n, samples) {
+  
+  basic_score <- numeric(n)
+  mean_precision <- numeric(n)
+  
+  for (k in 1:n) {
+    
+    tempaccuracy <- numeric(samples)
+    
+    for (sample in 1:samples) {
+      
+      KNNmetric <- KNNLOOCV_topic(topics, numwords, groupsize, removewords, k)
+      
+      tempaccuracy[sample] <- sum(KNNmetric[[1]]==KNNmetric[[2]])/length(KNNmetric[[2]])
+      print(sample)
+    }
+    basic_score[k] <- mean(tempaccuracy)
+    
+  }
+  return(basic_score)
+}
+
+basic_score_10 <- KNNkplot(topics=topics, n=70, numwords=10, samples=3)
+```
+```{r}
+plot(1:70, basic_score_10, type='b', pch=19, col='blue', 
+     xlab='K (Number of Neighbors)', ylab='Accuracy', 
+     main='KNN Accuracy vs K (10 length)')
+
+basic_score
+
+
+```
+```{r}
+KNNkplot(topics=topics, numwords=1000, n=70, samples=1)
+```
+```{r}
+KNNkplot(topics=topics, numwords=500, n=70, samples=1)
+```
+```{r}
+KNNkplot(topics=topics, numwords=100, n=70, samples=3)
+```
+```{r}
+plot(1:69, basic_score_RF, type='b', pch=19, col='blue', 
+     xlab='P', ylab='Accuracy', 
+     main='RF Accuracy vs P (100 length)')
+```
+```{r RF plots}
+basic_score_RF <- RFPplot_topic(topics=topics,  n=69, samples=3, numwords=100)
+```
+```{r}
+numwords <- 10
+samples <- 5
+cost_list <- c(0.001, 0.01, 0.1, 1, 10, 100)
+mean <- NULL
+
+for (P in cost_list){
+  accuracy <- NULL
+  for (i in 1:samples){
+    metric <- SVMLOOCV_topic(topics, numwords=numwords, cost=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+  print(P)
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+```
+```{r}
+plot(1:length(cost_list), mean, type='b', pch=19, col='blue', 
+     xlab='Cost', ylab='Accuracy', 
+     main='SVM Accuracy vs Cost (10 length)',
+     xaxt='n')
+
+axis(1, at=1:length(cost_list), labels=cost_list)
+```
+
+```{r}
+RFPplot_topic(topics=topics,  numwords=1000, n=69, samples=1)
+```
+```{r}
+RFPplot_topic(topics=topics,  numwords=500, n=69, samples=1)
+```
+```{r}
+RFPplot_topic(topics=topics,  numwords=100, n=69, samples=1)
+```
+
+```{r SVM linear kernel full length}
+
+
+#linear kernel
+
+#numwords FALSE
+#cost
+#0.001, 0.01, 0.1, 1, 10, 100
+#accuracy
+#0.9825581 0.9825581 0.9825581 0.9825581 0.9825581 0.9825581
+#thus we choose 0.1 cost as it has little effect
+
+#numwords 1000
+#cost
+#0.001, 0.01, 0.1, 1, 10, 100
+#accuracy
+#0.9651163 0.9651163 0.9534884 0.9593023 0.9476744 0.9496124
+#thus we choose 0.1 cost as it has little effect
+
+#numwords 500
+#cost
+#0.001, 0.01, 0.1, 1, 10, 100
+#accuracy
+#0.9496124 0.9341085 0.9399225 0.9399225 0.9341085 0.9224806
+#thus we choose 0.1 cost as it has little effect
+
+#numwords 100
+#cost
+#0.001, 0.01, 0.1, 1, 10, 100
+#accuracy
+#0.8294574 0.8333333 0.8468992 0.8217054 0.8294574 0.8372093A
+#thus we choose 0.1 cost as it has little effect
+```
+```{r SVM polynomial kernel full length gamma}
+numwords <- 100
+samples <- 10
+gamma_list <- c(0.1, 0.01, 0.1, 1, 10, 100)
+mean <- NULL
+
+for (P in gamma_list){
+  accuracy <- NULL
+  for (i in 1:samples){
+    metric <- SVMLOOCV_topic(topics, kernel='linear', cost=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+
+# polynomial kernel
+
+# cost fixed at 0.1
+
+# numwords FALSE
+# gamma
+# 0.005, 0.01, 0.1, 1
+# accuracy
+# 0.5406977 0.9476744 0.9127907 0.9127907
+# gamma
+# 0.0075, 0.01, 0.0125, 0.015
+# accuracy
+# 0.6395349 0.9476744 0.9825581 0.9476744
+# we choose 0.0125
+
+
+# numwords 1000
+# gamma
+# 0.005, 0.01, 0.1, 1
+# accuracy
+# 0.5174419 0.9651163 0.9593023 0.9418605
+# gamma
+# 0.0075, 0.01, 0.0125, 0.015
+# accuracy
+# 0.6395349 0.9476744 0.9825581 0.9476744
+# we choose 0.0125
+
+# numwords 500
+# gamma
+# 0.005, 0.01, 0.1, 1
+# accuracy
+# 0.5523256 0.9593023 0.9534884 0.9360465
+# gamma
+# 0.0075, 0.01, 0.0125, 0.015
+# accuracy
+# 0.7151163 0.9186047 0.9767442 0.9767442
+# we choose 0.0125
+
+# numwords 100
+# gamma
+# 0.005, 0.01, 0.1, 1
+# accuracy
+# 0.6627907 0.8546512 0.8662791 0.8546512
+# gamma
+# 0.0075, 0.01, 0.0125, 0.015
+# accuracy
+# 0.7848837 0.8604651 0.8720930 0.8604651
+# we choose 0.0125
+
+
+```
+```{r}
+numwords <- 100
+samples <- 1
+
+gamma_list <- c(0.0075, 0.01, 0.0125, 0.015)
+mean <- NULL
+
+for (P in gamma_list){
+  accuracy <- NULL
+  for (i in 1:samples){
+    metric <- SVMLOOCV_topic(topics, kernel='polynomial', numwords=numwords, gamma=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+# SVM
+# Polynomial Kernel
+# gamm fixed to 0.0125
+
+# numwords FALSE
+# cost
+# 0.001, 0.01, 0.1, 1, 10
+# accuracy
+# 0.9825581 0.9825581 0.9825581 0.9825581
+# we pick 0.1
+
+# numwords 1000
+# cost
+# 0.001, 0.01, 0.1, 1, 10
+# accuracy
+# 0.9418605 0.9534884 0.9534884 0.9534884 0.9534884
+# we pick 0.1
+
+# numwords 500
+# cost
+# 0.001, 0.01, 0.1, 1, 10
+# accuracy
+# 0.9360465 0.9069767 0.9360465 0.9244186 0.9476744 0.9418605
+# we pick 0.1
+
+# numwords 100
+# accuracy
+# 0.8197674 0.8546512 0.8313953 0.8372093 0.7965116 
+# we pick 0.1
+
+```
+
+```{r SVM polynomial kernel full length cost}
+numwords <- 100
+samples <- 1
+cost_list <- c(0.001, 0.01, 0.1, 1, 10, 100)
+mean <- NULL
+
+for (P in cost_list){
+  accuracy <- NULL
+  for (i in 1:samples){
+    metric <- SVMLOOCV_topic(topics, numwords=numwords, cost=P, gamma=0.0125)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+
+
+```
+
+
+
+```{r SVM sigmoid}
+numwords <- 500
+samples <- 1
+
+gamma_list <- c(0.0075, 0.01, 0.0125, 0.015)
+mean <- NULL
+
+for (P in gamma_list){
+  accuracy <- NULL
+  for (i in 1:samples){
+    metric <- SVMLOOCV_topic(62, kernel='sigmoid', numwords=numwords, gamma=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+topics
+
+# SVM sigmoid kernel
+
+
+# cost fixed at 0.1
+
+#gamma
+#0.0075, 0.01, 0.0125, 0.015
+
+# Numwords FALSE
+#accuracy
+#0.9883721 0.9883721 0.9883721 0.9883721
+
+#numwords 1000
+
+#accuracy
+#0.9767442 0.9883721 0.9767442 0.9709302
+
+#numwords 500
+#0.9534884 0.9593023 0.9418605 0.9651163
+
+#numwords 100
+#0.9651163 0.9651163 0.9767442 0.9593023
+
+# so we go with 0.0125
+```
+
+
+```{r SVM sigmoid}
+numwords <- FALSE
+samples <- 1
+
+gamma_list <- c(0.01, 0.1, 1, 10, 100)
+mean <- NULL
+
+for (P in gamma_list){
+  accuracy <- NULL
+  for (i in 1:samples){
+    metric <- SVMLOOCV_topic(topics, kernel='sigmoid', numwords=numwords, gamma=P)
+    accuracy <- c(accuracy, sum(metric[[1]]==metric[[2]])/length(metric[[2]]))
+  }
+
+  mean <- c(mean, mean(accuracy))
+}
+
+print(mean)
+#0.9883721 0.9825581 0.9767442 0.9825581 0.9709302
+```
+
+
+```{r DA Whole vs Topic specific bar charts}
+library(glue)
+numwords <- 100
+accuracy <- c()
+samples <- 3
+
+for (i in 1:length(topics)){
+  tempaccuracy <- c()
+  for (j in 1:samples){
+    metric <- DALOOCV_topic(c(topics[i]), numwords=numwords)
+    tempaccuracy <- c(tempaccuracy, (sum(metric[[1]]==metric[[2]])/length(metric[[1]])))
+  }
+  
+  accuracy <- c(accuracy, mean(tempaccuracy))
+  
+  tempaccuracy <- c()
+  for (j in 1:samples){
+    metric <- DALOOCV_whole(c(topics[i]), numwords=numwords)
+    tempaccuracy <- c(tempaccuracy, (sum(metric[[1]]==metric[[2]])/length(metric[[1]])))
+  }
+  
+  accuracy <- c(accuracy, mean(tempaccuracy))
+  
+}
+library(ggplot2)
+
+# Example data
+data <- data.frame(
+  Topic = rep(as.character(topics), each = 2),
+  Traindata = rep(c("Topic Specific", "Whole Dataset"), times = length(topics)),
+  Accuracy = accuracy
+)
+
+# Create the grouped bar plot
+ggplot(data, aes(x = Topic, y = Accuracy, fill = Traindata)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title =  glue("DA LOOCV Accuracy for Two Training Datasets (Length = {numwords})"),
+       x = "Topic",
+       y = "Accuracy") +
+  theme_minimal()
+```
+```{r KNN whole plot}
+numwords <- 100
+accuracy <- c()
+samples <- 1
+
+for (i in 1:length(topics)){
+  tempaccuracy <- c()
+  for (j in 1:samples){
+    metric <- KNNLOOCV_topic(c(topics[i]), numwords=numwords, k=1)
+    tempaccuracy <- c(tempaccuracy, (sum(metric[[1]]==metric[[2]])/length(metric[[1]])))
+  }
+  
+  accuracy <- c(accuracy, mean(tempaccuracy))
+  
+  tempaccuracy <- c()
+  for (j in 1:samples){
+    metric <- KNNLOOCV_whole(c(topics[i]), numwords=numwords, k=1)
+    tempaccuracy <- c(tempaccuracy, (sum(metric[[1]]==metric[[2]])/length(metric[[1]])))
+  }
+  
+  accuracy <- c(accuracy, mean(tempaccuracy))
+  
+}
+library(ggplot2)
+
+# Example data
+data <- data.frame(
+  Topic = rep(as.character(topics), each = 2),
+  Traindata = rep(c("Topic Specific", "Whole Dataset"), times = length(topics)),
+  Accuracy = accuracy
+)
+
+# Create the grouped bar plot
+ggplot(data, aes(x = Topic, y = Accuracy, fill = Traindata)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = glue("KNN LOOCV Accuracy for Two Training Datasets (Length = {numwords})"),
+       x = "Topic",
+       y = "Accuracy") +
+  theme_minimal() +
+  ylim(0, 1)
+
+```
+```{r RF Whole vs Topic specific bar charts}
+numwords <- FALSE
+accuracy <- c()
+samples <- 1
+
+for (i in 1:length(topics)){
+  tempaccuracy <- c()
+  for (j in 1:samples){
+    metric <- RFLOOCV_topic(c(topics[i]), numwords=numwords, P=10)
+    tempaccuracy <- c(tempaccuracy, (sum(metric[[1]]==metric[[2]])/length(metric[[1]])))
+  }
+  
+  accuracy <- c(accuracy, mean(tempaccuracy))
+  
+  tempaccuracy <- c()
+  for (j in 1:samples){
+    metric <- RFLOOCV_whole(c(topics[i]), numwords=numwords, P=10)
+    tempaccuracy <- c(tempaccuracy, (sum(metric[[1]]==metric[[2]])/length(metric[[1]])))
+  }
+  
+  accuracy <- c(accuracy, mean(tempaccuracy))
+  
+}
+library(ggplot2)
+
+# Example data
+data <- data.frame(
+  Topic = rep(as.character(topics), each = 2),
+  Traindata = rep(c("Topic Specific", "Whole Dataset"), times = length(topics)),
+  Accuracy = accuracy
+)
+
+# Create the grouped bar plot
+ggplot(data, aes(x = Topic, y = Accuracy, fill = Traindata)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = glue("RF LOOCV Accuracy for Two Training Datasets (Length = {numwords})"),
+       x = "Topic",
+       y = "Accuracy") +
+  theme_minimal() +
+  ylim(0, 1)
+```
+```{r SVM sigmoid Whole vs Topic specific bar charts}
+numwords <- 100
+accuracy <- c()
+samples <- 1
+
+for (i in 1:length(topics)){
+  tempaccuracy <- c()
+  for (j in 1:samples){
+    metric <- SVMLOOCV_topic(c(topics[i]), kernel='sigmoid', numwords=numwords, gamma=0.07)
+    tempaccuracy <- c(tempaccuracy, (sum(metric[[1]]==metric[[2]])/length(metric[[1]])))
+  }
+  
+  accuracy <- c(accuracy, mean(tempaccuracy))
+  print(accuracy)
+  
+  tempaccuracy <- c()
+  for (j in 1:samples){
+    metric <- SVMLOOCV_whole(c(topics[i]), kernel='sigmoid', numwords=numwords, gamma=0.0125)
+    tempaccuracy <- c(tempaccuracy, (sum(metric[[1]]==metric[[2]])/length(metric[[1]])))
+  }
+  
+  accuracy <- c(accuracy, mean(tempaccuracy))
+  print(accuracy)
+  
+}
+library(ggplot2)
+
+# Example data
+data <- data.frame(
+  Topic = rep(as.character(topics), each = 2),
+  Traindata = rep(c("Topic Specific", "Whole Dataset"), times = length(topics)),
+  Accuracy = accuracy
+)
+
+# Create the grouped bar plot
+ggplot(data, aes(x = Topic, y = Accuracy, fill = Traindata)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = glue("SVM LOOCV Accuracy for Two Training Datasets (Length = {numwords})"),
+       x = "Topic",
+       y = "Accuracy") +
+  theme_minimal() +
+  ylim(0, 1)
+ 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r REMOVEWORDS}
+samples <- 10
+features <- NULL
+for (topic in 1:110){
+  features <- rbind(features, humanM$features[[topic]])
+  features <- rbind(features, GPTM$features[[topic]])
+}
+
+features <- norm(features)
+
+feature_stds <- apply(features, 2, sd)
+
+features_cvs <- apply(features, 2, function(x) sd(x) / mean(x))
+
+# Find the indices of the 10 largest CVs
+largest_indices <- order(feature_stds, decreasing = TRUE)[1:65]
+
+# Print the indices
+#print(largest_indices)
+
+# Print the corresponding largest CVs
+#print(feature_stds[largest_indices])
+temp <- NULL
+for (j in samples){
+  metric <- DALOOCV_topic(topics, numwords=1000, removewords = FALSE)
+  temp <- c(temp, sum(metric[[1]]==metric[[2]])/length(metric[[1]]))
+
+}
+
+accuracy <- mean(temp)
+
+
+for (i in 1:50){
+  temp <- NULL
+  
+  for (j in samples){
+    metric <- DALOOCV_topic(topics, numwords=1000, removewords = sample(1:70, 1, replace = FALSE))
+    temp <- c(temp, sum(metric[[1]]==metric[[2]])/length(metric[[1]]))
+    
+  }
+  accuracy <- c(accuracy, mean(temp))
+}
+
+```
+```{r}
+plot(0:50, accuracy, type = "b", pch = 19, col = "blue",
+     xlab = "Number of Function Words Removed", ylab = "DA Accuracy",
+     main = "DA Accuracy vs Number of Function Words Removed \n (Randomly Chosen) Length = 1000")
+```
+
+```{r}
+samples <- 10
+features <- NULL
+for (topic in 1:110){
+  features <- rbind(features, humanM$features[[topic]])
+  features <- rbind(features, GPTM$features[[topic]])
+}
+
+features <- norm(features)
+
+feature_stds <- apply(features, 2, sd)
+
+features_cvs <- apply(features, 2, function(x) sd(x) / mean(x))
+
+# Find the indices of the 10 largest CVs
+largest_indices <- order(feature_stds, decreasing = TRUE)[1:65]
+
+# Print the indices
+#print(largest_indices)
+
+# Print the corresponding largest CVs
+#print(feature_stds[largest_indices])
+temp <- NULL
+for (j in samples){
+  metric <- KNNLOOCV_topic(topics, numwords=1000, removewords = FALSE, k=30)
+  temp <- c(temp, sum(metric[[1]]==metric[[2]])/length(metric[[1]]))
+  
+}
+
+accuracy <- mean(temp)
+largest_indices
+
+#sample(1:71, i, replace = FALSE)
+
+
+for (i in 1:50){
+  temp <- NULL
+  
+  for (j in samples){
+    metric <- KNNLOOCV_topic(topics, numwords=1000, removewords = sample(1:71, i, replace = FALSE), k=30)
+    temp <- c(temp, sum(metric[[1]]==metric[[2]])/length(metric[[1]]))
+    
+  }
+  accuracy <- c(accuracy, mean(temp))
+}
+
+```
+
+```{r}
+plot(0:50, accuracy, type = "b", pch = 19, col = "blue",
+     xlab = "Number of Function Words Removed", ylab = "KNN Accuracy",
+     main = "KNN Accuracy vs Number of Function Words Removed\n(Randomly Chosen) Length = 1000")
+```
+
+```{r}
+feature_stds <- apply(features, 2, sd)
+
+features_cvs <- apply(features, 2, function(x) sd(x) / mean(x))
+
+# Find the indices of the 10 largest CVs
+largest_indices <- order(feature_stds, decreasing = TRUE)[1:10]
+
+print('these are the highest standard deviation')
+print(largest_indices)
+print(feature_stds[largest_indices])
+```
+

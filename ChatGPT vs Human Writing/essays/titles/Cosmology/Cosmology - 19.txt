@@ -1,0 +1,1 @@
+Ditching the leap second would mean decoupling clock time from the Earth’s rotation – from day and night itself
